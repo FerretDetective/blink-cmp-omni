@@ -52,17 +52,18 @@ end
 
 ---Invoke an omnifunc handling `v:lua.*`
 ---@param func string
----@param ... any
+---@param findstart integer
+---@param base string
 ---@return any
-local function invoke_omnifunc(func, ...)
-    local args = { ... }
+local function invoke_omnifunc(func, findstart, base)
     local prev_pos = vim.api.nvim_win_get_cursor(0)
 
     local _, result = pcall(function()
-        local match = func:match("^v:lua%.(.+)$")
+        local args = { findstart, base }
+        local match = func:match("^v:lua%.(.+)")
+
         if match then
-            -- string.sub [2, -2] range removes surround '{' and '}'
-            return loadstring(string.format("%s(%s)", match, vim.inspect(args):sub(2, -2)))()
+            return vim.fn.luaeval(string.format("%s(_A[1], _A[2], _A[3])", match), args)
         else
             return vim.api.nvim_call_function(func, args)
         end
@@ -83,6 +84,12 @@ function Source:get_completions(context, resolve)
 
     -- get the starting column from which completion will start
     local start_col = invoke_omnifunc(vim.bo.omnifunc, 1, "")
+
+    if type(start_col) ~= "number" then
+        resolve()
+        return
+    end
+
     local cur_line, cur_col = unpack(context.cursor)
 
     -- FIXME: differentiate between staying in (-2) vs leaving (-3) completions mode.
