@@ -5,7 +5,7 @@
 local Source = {}
 
 ---@class blink-cmp-omni.Options
-Source.defaults = {
+local defaults = {
     ---disable on certain omnifuncs
     ---@type string[]?
     disable_omnifuncs = { "v:lua.vim.lsp.omnifunc" },
@@ -26,9 +26,6 @@ Source.defaults = {
 ---@field empty integer?
 ---@field user_data any?
 
----@type blink-cmp-omni.Options
-Source.options = nil
-
 ---@param id string
 ---@param config blink.cmp.SourceProviderConfig
 ---@return blink-cmp-omni.Source
@@ -41,8 +38,7 @@ function Source.new(id, config)
     self.config = config
     self.list = nil
     self.resolve_cache = {}
-
-    self.config.opts = vim.tbl_deep_extend("force", Source.defaults, self.config.opts or {})
+    self.config.opts = vim.tbl_deep_extend("force", defaults, self.config.opts or {})
 
     return self
 end
