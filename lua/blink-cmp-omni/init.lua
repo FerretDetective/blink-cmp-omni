@@ -1,60 +1,60 @@
 ---@module "blink.cmp"
+local Kind = require("blink.cmp.types").CompletionItemKind
 
----@class blink-cmp-omni.Source : blink.cmp.Source
----@field config blink.cmp.SourceProviderConfig
-local Source = {}
+---@class blink-cmp-omni.OmniOpts
+---@field disable_omnifuncs string[]
+---@field disable_filetypes string[]
 
----@class blink-cmp-omni.Options
-local defaults = {
-    ---disable on certain omnifuncs
-    ---@type string[]?
-    disable_omnifuncs = { "v:lua.vim.lsp.omnifunc" },
-    ---disable on certain filetypes
-    ---@type string[]?
-    disable_filetypes = {},
-}
+---@class blink-cmp-omni.OmniSource : blink.cmp.Source
+---@field opts blink-cmp-omni.OmniOpts
+local omni = {}
 
----@class blink-cmp-omni.CompleteItem
+---@class blink-cmp-omni.CompleteFuncItem
 ---@field word string
----@field abbr string?
----@field menu string?
----@field info string?
----@field kind string?
----@field icase integer?
----@field equal integer?
----@field dup integer?
----@field empty integer?
----@field user_data any?
+---@field abbr? string
+---@field menu? string
+---@field info? string
+---@field kind? string
+---@field icase? integer
+---@field equal? integer
+---@field dup? integer
+---@field empty? integer
+---@field user_data? any
 
----@param id string
+---@alias blink-cmp-omni.CompleteFuncWords (string | blink-cmp-omni.CompleteFuncItem)[]
+
+---@param _ string
 ---@param config blink.cmp.SourceProviderConfig
----@return blink-cmp-omni.Source
-function Source.new(id, config)
-    local self = setmetatable({}, { __index = Source })
+---@return blink-cmp-omni.OmniSource
+function omni.new(_, config)
+    local self = setmetatable({}, { __index = omni })
 
-    self.id = id
-    self.name = config.name
-    self.module = config.module
-    self.config = config
-    self.list = nil
-    self.resolve_cache = {}
-    self.config.opts = vim.tbl_deep_extend("force", defaults, self.config.opts or {})
+    local opts = vim.tbl_deep_extend("force", {
+        disable_omnifuncs = { "v:lua.vim.lsp.omnifunc" },
+        disable_filetypes = {},
+    }, config.opts or {})
+
+    require("blink.cmp.config.utils").validate("sources.providers.omni", {
+        disable_omnifuncs = { opts.disable_omnifuncs, "table" },
+        disable_filetypes = { opts.disable_filetypes, "table" },
+    }, opts)
+
+    self.opts = opts
 
     return self
 end
 
-function Source:enabled()
+function omni:enabled()
     return vim.bo.omnifunc ~= ""
         and vim.api.nvim_get_mode().mode == "i"
-        and not vim.tbl_contains(self.config.opts.disable_omnifuncs, vim.bo.omnifunc)
-        and not vim.tbl_contains(self.config.opts.disable_filetypes, vim.bo.filetype)
+        and not vim.tbl_contains(self.opts.disable_omnifuncs, vim.bo.omnifunc)
+        and not vim.tbl_contains(self.opts.disable_filetypes, vim.bo.filetype)
 end
 
 ---Invoke an omnifunc handling `v:lua.*`
----@param func string
----@param findstart integer
----@param base string
----@return any
+---@return (table<{ words: blink-cmp-omni.CompleteFuncWords, refresh: string }> | blink-cmp-omni.CompleteFuncWords) | integer
+---@overload fun(func: string, findstart: 1, base: ''): integer
+---@overload fun(func: string, findstart: 0, base: string): table<{ words: blink-cmp-omni.CompleteFuncWords, refresh: string }> | blink-cmp-omni.CompleteFuncWords
 local function invoke_omnifunc(func, findstart, base)
     local prev_pos = vim.api.nvim_win_get_cursor(0)
 
@@ -77,9 +77,19 @@ local function invoke_omnifunc(func, findstart, base)
     return result
 end
 
+-- Map the defined `complete-items` 'kind's to blink kinds
+local OMNI_TO_BLINK_KIND = {
+    v = Kind.Variable, -- variable
+    f = Kind.Function, -- function/method
+    m = Kind.Field, -- struct/class member
+    t = Kind.TypeParameter, -- typedef
+    d = Kind.Constant, -- #define/macro
+}
+
 ---@param context blink.cmp.Context
 ---@param resolve fun(response?: blink.cmp.CompletionResponse)
-function Source:get_completions(context, resolve)
+---@return nil
+function omni:get_completions(context, resolve)
     -- for info on omnifunc see `:h 'omnifunc'`, and `:h complete-functions`
 
     -- get the starting column from which completion will start
@@ -87,15 +97,14 @@ function Source:get_completions(context, resolve)
 
     if type(start_col) ~= "number" then
         resolve()
-        return
+        return nil
     end
 
     local cur_line, cur_col = unpack(context.cursor)
 
-    -- FIXME: differentiate between staying in (-2) vs leaving (-3) completions mode.
     if start_col == -2 or start_col == -3 then
         resolve()
-        return
+        return nil
     elseif start_col < 0 or start_col > cur_col then
         start_col = cur_col
     end
@@ -104,7 +113,8 @@ function Source:get_completions(context, resolve)
     -- get the actual omnifunc completion results
     local cmp_results =
         invoke_omnifunc(vim.bo.omnifunc, 0, string.sub(context.line, start_col + 1, cur_col))
-    cmp_results = cmp_results["words"] or cmp_results ---@type (string|blink-cmp-omni.CompleteItem)[]
+    cmp_results = cmp_results["words"] or cmp_results
+    ---@cast cmp_results blink-cmp-omni.CompleteFuncWords
 
     local range = {
         ["start"] = {
@@ -119,30 +129,50 @@ function Source:get_completions(context, resolve)
 
     local items = {} ---@type blink.cmp.CompletionItem[]
     for _, cmp in ipairs(cmp_results) do
+        local item ---@type blink.cmp.CompletionItem
+
         if type(cmp) == "string" then
-            table.insert(items, {
+            item = {
                 label = cmp,
                 textEdit = {
                     range = range,
                     newText = cmp,
                 },
-            })
+            }
         else
-            table.insert(items, {
+            item = {
                 label = cmp.abbr or cmp.word,
                 textEdit = {
                     range = range,
                     newText = cmp.word,
                 },
                 labelDetails = {
-                    detail = cmp.kind,
                     description = cmp.menu,
                 },
-            })
+            }
+
+            -- if possible, prefer blink's 'kind' to remove redundancy
+            local blink_kind = OMNI_TO_BLINK_KIND[cmp.kind]
+            if blink_kind ~= nil then
+                item.kind = blink_kind
+            else
+                item.labelDetails.detail = cmp.kind
+            end
+
+            if cmp.info ~= nil and #cmp.info > 0 then
+                item.documentation = {
+                    value = cmp.info,
+                    kind = "plaintext",
+                }
+            end
         end
+
+        table.insert(items, item)
     end
 
     resolve({ is_incomplete_forward = false, is_incomplete_backward = false, items = items })
+
+    return nil
 end
 
-return Source
+return omni
