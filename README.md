@@ -1,7 +1,7 @@
 # blink-cmp-omni
 
 > [!WARNING]
-> This plugin will no longer be maintained as of the next blink.cmp release (0.11.x) since the feature has been upstreamed in this [PR](https://github.com/Saghen/blink.cmp/pull/1114).
+> This plugin is no longer maintained as the feature has been upstreamed in blink.cmp [v0.12.0](https://github.com/Saghen/blink.cmp/releases/tag/v0.12.0).
 
 [blink.cmp](https://github.com/saghen/blink.cmp) source for Neovim's omni-func completions.
 
